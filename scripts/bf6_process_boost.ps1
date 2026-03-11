@@ -25,7 +25,7 @@ Write-Host "  OK: PriorityClass = High" -ForegroundColor Green
 
 # --- 2. Baixar prioridade de processos concorrentes (exceto sistema) ---
 Write-Host "`n[2/4] Baixando prioridade de apps em background..." -ForegroundColor Yellow
-$lowPriority = @("OneDrive", "OneDrive.Sync.Service", "EpicGamesLauncher", "EACefSubProcess", "EADesktop", "EABackgroundService", "EAEgsProxy", "msedge", "Code")
+$lowPriority = @("EpicGamesLauncher", "EACefSubProcess", "EADesktop", "EABackgroundService", "EAEgsProxy", "msedge", "Code")
 foreach ($name in $lowPriority) {
     $procs = Get-Process -Name $name -ErrorAction SilentlyContinue
     foreach ($p in $procs) {
@@ -47,7 +47,7 @@ Get-NetUDPEndpoint -OwningProcess $bf6.Id -ErrorAction SilentlyContinue | Select
 Write-Host "[4/4] Processos que voce pode considerar FECHAR para liberar recursos:" -ForegroundColor Yellow
 $suggest = @(
     @{Name="EpicGamesLauncher"; Reason="Epic Games Launcher (desnecessario durante jogo)"},
-    @{Name="OneDrive"; Reason="OneDrive sincronizando (consome rede e disco)"},
+
     @{Name="msedge"; Reason="Microsoft Edge (consome RAM)"},
     @{Name="Code"; Reason="VS Code (consome RAM e CPU)"}
 )
