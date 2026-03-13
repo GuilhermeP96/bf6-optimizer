@@ -2,13 +2,20 @@
 
 ## Overview
 
-`bf6_network_optimize.ps1` applies system-level network and power optimizations to reduce latency and improve stability in online multiplayer games, specifically Battlefield 6.
+A **FASE 1** do script unificado `bf6_boost.ps1` aplica otimizações de rede e sistema para reduzir latência e melhorar estabilidade em jogos multiplayer online.
 
-**Run once** after installing or reinstalling Windows. Most changes persist across reboots.
+**Executa uma vez** — o script detecta automaticamente quais valores já estão configurados e só altera o que for diferente. Solicita reboot apenas se alterações de registro foram feitas. A maioria das mudanças persiste após reinicializações.
 
 ---
 
 ## Optimization Breakdown
+
+### 0. Network Diagnostics
+
+**What it does:**  
+Identifies the active network adapter and displays link speed, driver version, and packet statistics. Alerts if Wi-Fi is being used (primary cause of packet loss in gaming).
+
+---
 
 ### 1. Nagle Algorithm Disable
 
@@ -135,7 +142,44 @@ netsh int tcp set supplemental internet congestionprovider=default
 
 ---
 
-### 5. NIC Power Management
+### 5. TCP Receive/Transmit Buffers
+
+**What it does:**  
+Maximizes TCP buffer sizes and adapter RX/TX ring buffers for better packet handling under load.
+
+**Registry changes:**
+```
+HKLM:\SYSTEM\CurrentControlSet\Services\Tcpip\Parameters
+  TcpWindowSize = 65535        (Maximum TCP window)
+  Tcp1323Opts = 3              (Enable window scaling + timestamps)
+  DefaultTTL = 64              (Standard hop limit)
+  MaxUserPort = 65534          (Maximum ephemeral ports)
+  TcpTimedWaitDelay = 30       (Faster port recycling)
+  TcpMaxDataRetransmissions = 5 (Retransmit attempts)
+  SackOpts = 1                 (Selective ACK — faster recovery)
+```
+
+**Adapter properties:**
+- Receive Buffers / Rx Ring Descriptors → set to maximum supported
+- Transmit Buffers / Tx Ring Descriptors → set to maximum supported
+
+**Impact:**
+- Larger buffers prevent packet loss during burst traffic (64+ player battles)
+- Selective ACK enables recovery without retransmitting entire windows
+- More ephemeral ports prevent port exhaustion under heavy connection load
+
+**How to revert:**
+```powershell
+$path = "HKLM:\SYSTEM\CurrentControlSet\Services\Tcpip\Parameters"
+Remove-ItemProperty -Path $path -Name "TcpWindowSize","Tcp1323Opts","DefaultTTL","MaxUserPort","TcpTimedWaitDelay","TcpMaxDataRetransmissions","SackOpts" -ErrorAction SilentlyContinue
+# Adapter buffers: reset via Device Manager → NIC → Advanced
+```
+
+**Requires reboot:** Yes (registry changes)
+
+---
+
+### 6. NIC Power Management
 
 **What it does:**  
 Disables power-saving features on the active network adapter that can introduce latency.
@@ -145,7 +189,8 @@ Disables power-saving features on the active network adapter that can introduce 
 | Energy Efficient Ethernet (EEE/802.3az) | Puts NIC into low-power state between packets; waking up adds 2-10ms latency |
 | Flow Control (802.3x) | Can pause packet transmission for up to 33ms during "congestion" |
 | Interrupt Moderation | Batches interrupts to reduce CPU usage, but adds 1-5ms per batch |
-| Wake on LAN | Unnecessary during gaming, adds minor processing overhead |
+| Offloads (LSO/TCP/UDP/Checksum) | Offloading to NIC firmware can cause bugs on consumer hardware |
+| Wake on LAN / Power Management | Unnecessary during gaming, adds minor processing overhead |
 
 **Impact:**
 - Eliminates random latency spikes (2-33ms) caused by power saving features
@@ -160,13 +205,65 @@ Disables power-saving features on the active network adapter that can introduce 
 
 ---
 
-### 6. Power Plan: Ultimate Performance
+### 7. Wi-Fi Optimizations (if applicable)
+
+**What it does:**  
+Applies Wi-Fi-specific optimizations only if the active adapter is wireless.
+
+| Setting | Value | Why |
+|---|---|---|
+| Roaming Aggressiveness | Lowest (1) | Prevents switching access points mid-game — AP transitions cause 100-500ms drops |
+| Preferred Band | 5GHz | 5GHz has less interference and lower latency than 2.4GHz |
+| Throughput Boost | Enabled | Maximizes data throughput mode |
+| MIMO/Spatial Streams | No SMPS | Uses all antenna chains for maximum throughput |
+
+**Impact:**
+- Significantly reduces random latency spikes on Wi-Fi
+- 5GHz preference can cut average latency by 5-15ms vs 2.4GHz
+
+**Important:** Ethernet cable eliminates ~90% of Wi-Fi-related packet loss. Use cable if at all possible.
+
+**How to revert:**  
+Reset in Device Manager → Wi-Fi Adapter → Advanced Properties.
+
+**Requires reboot:** No
+
+---
+
+### 8. QoS Bandwidth Release
+
+**What it does:**  
+Windows reserves up to 20% of network bandwidth for QoS (Quality of Service) by default. This setting removes that reservation.
+
+**Registry change:**
+```
+HKLM:\SOFTWARE\Policies\Microsoft\Windows\Psched
+  NonBestEffortLimit = 0   (0% reserved, 100% available for apps)
+```
+
+Also disables UDP Receive Offload (URO) via `netsh int udp set global uro=disabled`.
+
+**Impact:**
+- Full bandwidth available for gaming
+- Noticeable on connections under 100 Mbps
+
+**How to revert:**
+```powershell
+Remove-ItemProperty -Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows\Psched" -Name "NonBestEffortLimit"
+```
+
+**Requires reboot:** No
+
+---
+
+### 9. Power Plan: Ultimate Performance
 
 **What it does:**  
 Activates the "High Performance" or "Ultimate Performance" power plan, which:
 - Keeps CPU at maximum frequency (disables SpeedStep/Cool'n'Quiet dynamic scaling)
 - Disables aggressive C-state transitions (CPU won't enter deep sleep between frames)
 - Maximizes PCI Express link state power
+- Sets CPU throttle min/max to 100% (eliminates ramp-up delay)
 
 **Impact:**
 - Eliminates micro-stutters caused by CPU frequency ramping (takes 1-5ms to ramp up)
@@ -183,17 +280,32 @@ powercfg /setactive 381b4222-f694-41f0-9685-ff5bb260df2e
 
 ---
 
-### 7. DNS Cache Flush
+### 10. DNS Cache Flush + Winsock Reset
 
 **What it does:**  
-Clears the Windows DNS resolver cache (`ipconfig /flushdns`).
+Clears the Windows DNS resolver cache (`ipconfig /flushdns`). If network registry changes were made (reboot needed), also executes `netsh winsock reset` and `netsh int ip reset` to ensure clean state.
 
 **Impact:**
 - Forces fresh DNS resolution for game servers
 - Fixes stale DNS entries that might route to decommissioned servers
-- Zero risk; cache rebuilds naturally
+- Winsock reset clears any corrupted network catalog entries
+- Zero risk; cache and catalog rebuild naturally
 
-**Requires reboot:** No
+**Requires reboot:** No (Winsock reset takes full effect after reboot, which is already required by other changes)
+
+---
+
+## Smart Change Detection
+
+The script uses helper functions to compare current values before making changes:
+
+- **`Set-RegIfDifferent`**: Reads the current registry value and only writes if it differs. Tracks whether a reboot is needed via the `$script:rebootNeeded` flag.
+- **`Set-AdapterPropIfDifferent`**: Compares adapter advanced property values before changing.
+
+This means:
+- Running the script multiple times is safe and idempotent
+- No reboot is requested unless actual changes were made
+- Winsock reset only runs when registry changes require it
 
 ---
 
