@@ -351,15 +351,15 @@ Write-Host "`n########################################" -ForegroundColor Magenta
 Write-Host " FASE 2: Otimizacao de Processo (Loop)" -ForegroundColor Magenta
 Write-Host "########################################" -ForegroundColor Magenta
 
-$cpuCount = (Get-CimInstance Win32_Processor).NumberOfLogicalProcessors
+$cpuCount = (Get-CimInstance Win32_Processor | Measure-Object -Property NumberOfLogicalProcessors -Sum).Sum
 
 while ($true) {
     # Aguardar BF6 iniciar
-    $bf6 = Get-Process -Name "bf6" -ErrorAction SilentlyContinue
+    $bf6 = Get-Process -Name "bf6" -ErrorAction SilentlyContinue | Sort-Object WorkingSet64 -Descending | Select-Object -First 1
     if (-not $bf6) {
         Write-Host "`nAguardando BF6 iniciar... (verificando a cada 30s)" -ForegroundColor Yellow
         Write-Host "(Ctrl+C para parar)" -ForegroundColor DarkGray
-        while (-not ($bf6 = Get-Process -Name "bf6" -ErrorAction SilentlyContinue)) {
+        while (-not ($bf6 = Get-Process -Name "bf6" -ErrorAction SilentlyContinue | Sort-Object WorkingSet64 -Descending | Select-Object -First 1)) {
             Start-Sleep -Seconds 30
         }
         Write-Host "`nBF6 detectado! Iniciando otimizacao..." -ForegroundColor Green
@@ -371,7 +371,7 @@ while ($true) {
     # Loop de otimizacao enquanto BF6 estiver rodando
     while ($true) {
         $iteration++
-        $bf6 = Get-Process -Name "bf6" -ErrorAction SilentlyContinue
+        $bf6 = Get-Process -Name "bf6" -ErrorAction SilentlyContinue | Sort-Object WorkingSet64 -Descending | Select-Object -First 1
         if (-not $bf6) {
             Write-Host "`nBF6 encerrado. Voltando ao modo de espera..." -ForegroundColor Yellow
             break
